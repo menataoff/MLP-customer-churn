@@ -44,6 +44,11 @@ class ModelMLP(nn.Module):
                 loss.backward()
                 self.loss_history.append(loss.item())
                 optimizer.step()
-
+    def predict(self, X, threshold = 0.5):
+        self.eval()
+        with torch.no_grad():
+            logits = self.forward(X)
+            probs = torch.sigmoid(logits)
+            return (probs >= threshold).int()
 
 
