@@ -59,6 +59,11 @@ class ModelMLP(nn.Module):
         pos_weight = torch.tensor(n_neg / n_pos).to(self.device)
         criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
         self.train()
+
+        best_val_loss = float('inf')
+        patience = 64
+        patience_counter = 0
+
         pbar = tqdm(range(epochs), desc="Training")
         for epoch in pbar:
             epoch_loss = 0.0
@@ -84,9 +89,18 @@ class ModelMLP(nn.Module):
                         y_val_pred = self.forward(X_val_batch)
                         loss = criterion(y_val_pred, y_val_batch.unsqueeze(1))
                         val_loss += loss.item()
-                val_loss /= len(data_val) #зачем?
+                val_loss /= len(data_val)
                 self.val_loss_history.append(val_loss)
                 self.train()
+
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
+                    patience_counter = 0
+                else:
+                    patience_counter += 1
+                    if patience_counter >= patience:
+                        print(f"Early stopping at epoch {epoch}")
+                        break
 
     def predict_proba(self, X):
         self.eval()
@@ -102,5 +116,18 @@ class ModelMLP(nn.Module):
             logits = self.forward(X)
             probs = torch.sigmoid(logits)
             return (probs >= threshold).int().cpu()
+
+    def save(self, path):
+        torch.save({
+            'model_state_dict': self.state_dict(),
+            'loss_history': self.loss_history,
+            'val_loss_history': self.val_loss_history
+        }, path)
+
+    def load(self, path):
+        checkpoint = torch.load(path)
+        self.load_state_dict(checkpoint['model_state_dict'])
+        self.loss_history = checkpoint['loss_history']
+        self.val_loss_history = checkpoint['val_loss_history']
 
 
