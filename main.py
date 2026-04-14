@@ -36,5 +36,7 @@ X_test_scaled = torch.Tensor(ct.transform(X_test))
 
 print(X_train_scaled[0])
 
+model =
+
 
 
