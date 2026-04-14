@@ -20,9 +20,19 @@ class ModelMLP(nn.Module):
         self.to(self.device)
         self.loss_history = []
         self.val_loss_history = []
-        self.net = nn.Sequential(nn.Linear(input_dim, 32),
-                                 nn.ReLU(),
-                                 nn.Linear(32, 1)) #почему лучше без сигмоиды? потому что численно стабильнее
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, 32),
+            nn.BatchNorm1d(32),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+
+            nn.Linear(32, 16),
+            nn.BatchNorm1d(16),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+
+            nn.Linear(16, 1)
+        )
         self.opt_dict = {
             "Adam": optim.Adam,
             "RMSprop": optim.RMSprop,
@@ -32,6 +42,7 @@ class ModelMLP(nn.Module):
     def forward(self, x):
         return self.net(x)
     def fit(self, X_train, y_train, opt_name="Adam", epochs=128, batch_size=32, X_val=None, y_val=None, **opt_kwargs):
+        self.to(self.device)
         data_train = DataLoader(MyDataset(X_train, y_train),
                                 batch_size=batch_size,
                                 shuffle=True,
@@ -43,18 +54,26 @@ class ModelMLP(nn.Module):
                                   shuffle=False,
                                   drop_last=False)
         optimizer = self.opt_dict[opt_name](self.parameters(), **opt_kwargs)
-        criterion = nn.BCEWithLogitsLoss()
+        n_pos = y_train.sum().item()  # если класс 1 = 1, класс 0 = 0
+        n_neg = len(y_train) - n_pos
+        pos_weight = torch.tensor(n_neg / n_pos).to(self.device)
+        criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
         self.train()
-        for epoch in tqdm(range(epochs)):
+        pbar = tqdm(range(epochs), desc="Training")
+        for epoch in pbar:
+            epoch_loss = 0.0
+            n_batches = 0
             for X_batch, y_batch in data_train:
                 X_batch, y_batch = X_batch.to(self.device), y_batch.to(self.device)
                 optimizer.zero_grad()
                 y_pred = self.forward(X_batch)
-                loss = criterion(y_pred, y_batch)
+                loss = criterion(y_pred, y_batch.unsqueeze(1))
                 loss.backward()
-                self.loss_history.append(loss.item())
                 optimizer.step()
-
+                n_batches += 1
+                epoch_loss += (loss.item() - epoch_loss) / n_batches
+            self.loss_history.append(epoch_loss)
+            pbar.set_postfix({'loss': f'{epoch_loss:.4f}'})
             #надо ли сделать self.eval()?
             if data_val is not None:
                 self.eval()
@@ -63,17 +82,25 @@ class ModelMLP(nn.Module):
                     for X_val_batch, y_val_batch in data_val:
                         X_val_batch, y_val_batch = X_val_batch.to(self.device), y_val_batch.to(self.device)
                         y_val_pred = self.forward(X_val_batch)
-                        loss = criterion(y_val_pred, y_val_batch)
+                        loss = criterion(y_val_pred, y_val_batch.unsqueeze(1))
                         val_loss += loss.item()
                 val_loss /= len(data_val) #зачем?
                 self.val_loss_history.append(val_loss)
                 self.train()
 
+    def predict_proba(self, X):
+        self.eval()
+        X = X.to(self.device)
+        with torch.no_grad():
+            logits = self.forward(X)
+            return torch.sigmoid(logits).cpu().numpy()
+
     def predict(self, X, threshold = 0.5):
         self.eval()
+        X = X.to(self.device)
         with torch.no_grad():
             logits = self.forward(X)
             probs = torch.sigmoid(logits)
-            return (probs >= threshold).int()
+            return (probs >= threshold).int().cpu()
 
 
